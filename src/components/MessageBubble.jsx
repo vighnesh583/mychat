@@ -21,7 +21,14 @@ const MessageBubble = ({ message, isOwnMessage }) => {
           <div className="message-username">{message.username}</div>
         )}
         <div className="message-text">{message.text}</div>
-        <div className="message-timestamp">{formatTime(message.timestamp)}</div>
+        <div className="message-timestamp">
+          {formatTime(message.timestamp)}
+          {isOwnMessage && (
+            <span className="read-receipt">
+              {message.seen ? ' ✓✓' : ' ✓'}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

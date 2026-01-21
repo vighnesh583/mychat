@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ref, push, onValue, serverTimestamp } from 'firebase/database';
+import { ref, push, onValue, update } from 'firebase/database';
 import { database } from '../firebase';
 import MessageBubble from './MessageBubble';
 import InputBox from './InputBox';
@@ -13,7 +13,9 @@ import '../styles/ChatRoom.css';
 const ChatRoom = ({ username, onLogout }) => {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [notificationPermission, setNotificationPermission] = useState(Notification.permission);
   const messagesEndRef = useRef(null);
+  const previousMessageIdsRef = useRef(new Set());
   const messagesRef = ref(database, 'messages');
 
   // Auto-scroll to latest message
@@ -24,6 +26,15 @@ const ChatRoom = ({ username, onLogout }) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        setNotificationPermission(permission);
+      });
+    }
+  }, []);
 
   // Subscribe to real-time messages from Firebase
   useEffect(() => {
@@ -37,6 +48,34 @@ const ChatRoom = ({ username, onLogout }) => {
         }));
         messagesArray.sort((a, b) => a.timestamp - b.timestamp);
         setMessages(messagesArray);
+
+        // Mark unread messages as seen
+        const updates = {};
+        messagesArray.forEach((message) => {
+          if (message.username !== username && message.seen === false) {
+            updates[`${message.id}/seen`] = true;
+          }
+        });
+        if (Object.keys(updates).length > 0) {
+          update(messagesRef, updates).catch(err => console.error('Failed to update seen status:', err));
+        }
+
+        // Trigger browser notification for new messages
+        if (!loading && notificationPermission === 'granted') {
+          messagesArray.forEach((message) => {
+            // Only notify for messages from others that we haven't seen before
+            if (message.username !== username && !previousMessageIdsRef.current.has(message.id)) {
+              new Notification('New Message', {
+                body: 'You have received a new message',
+                icon: '/vite.svg',
+                tag: message.id // Prevents duplicate notifications
+              });
+            }
+          });
+        }
+
+        // Update the set of known message IDs
+        previousMessageIdsRef.current = new Set(messagesArray.map(m => m.id));
       } else {
         setMessages([]);
       }
@@ -45,7 +84,7 @@ const ChatRoom = ({ username, onLogout }) => {
 
     // Cleanup subscription on unmount
     return () => unsubscribe();
-  }, []);
+  }, [loading, notificationPermission, username]);
 
   // Send message to Firebase
   const handleSendMessage = async (text) => {
@@ -53,7 +92,8 @@ const ChatRoom = ({ username, onLogout }) => {
       await push(messagesRef, {
         text,
         username,
-        timestamp: Date.now() // Using Date.now() for consistency
+        timestamp: Date.now(),
+        seen: false // Default seen to false
       });
     } catch (error) {
       console.error('Error sending message:', error);
